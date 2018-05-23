@@ -34,7 +34,11 @@ def test_add_edge():
     dag.add_node('a')
     dag.add_node('b')
     dag.add_edge('a', 'b')
-    assert dag.graph == {'a': set('b'), 'b': set()}
+    assert dag.graph == {'a': set([('b', None)]), 'b': set()}
+    print(dag.graph['b'])
+    assert ('b', None) in dag.graph['a']
+    assert 'b' in dag.graph
+    assert len(dag.graph['b']) == 0
 
 
 @with_setup(blank_setup)
@@ -43,10 +47,14 @@ def test_from_dict():
                    'b': ['d'],
                    'c': ['d'],
                    'd': []})
-    assert dag.graph == {'a': set(['b', 'c']),
-                         'b': set('d'),
-                         'c': set('d'),
+    assert dag.graph == {'a': set([('b', None), ('c', None)]),
+                         'b': set([('d',None)]),
+                         'c': set([('d', None)]),
                          'd': set()}
+    assert ('b',None) in dag.graph['a'] and ('c', None) in dag.graph['a']
+    assert ('d', None) in dag.graph['b'] and len(dag.graph['b']) == 1
+    assert ('d', None) in dag.graph['c'] and len(dag.graph['c']) == 1
+    assert len(dag.graph['d']) == 0
 
 
 @with_setup(blank_setup)
@@ -59,7 +67,7 @@ def test_reset_graph():
 
 @with_setup(start_with_graph)
 def test_ind_nodes():
-    assert dag.ind_nodes(dag.graph) == ['a']
+    assert list(dag.ind_nodes(dag.graph)) == ['a']
 
 
 @with_setup(blank_setup)
@@ -67,7 +75,7 @@ def test_topological_sort():
     dag.from_dict({'a': [],
                    'b': ['a'],
                    'c': ['b']})
-    assert dag.topological_sort() == ['c', 'b', 'a']
+    assert list(dag.topological_sort()) == ['c', 'b', 'a']
 
 
 @with_setup(start_with_graph)
@@ -84,14 +92,18 @@ def test_failed_validation():
 
 @with_setup(start_with_graph)
 def test_downstream():
-    assert set(dag.downstream('a', dag.graph)) == set(['b', 'c'])
+    nodes_downstream_of_a = dag.downstream('a')
+    print(repr(dag.graph['a']))
+    assert 'b' in nodes_downstream_of_a
+    assert 'c' in nodes_downstream_of_a
+    assert len(nodes_downstream_of_a) == 2
 
 
 @with_setup(start_with_graph)
 def test_all_downstreams():
-    assert dag.all_downstreams('a') == ['c', 'b', 'd']
-    assert dag.all_downstreams('b') == ['d']
-    assert dag.all_downstreams('d') == []
+    assert list(dag.all_downstreams('a')) == ['c', 'b', 'd']
+    assert list(dag.all_downstreams('b')) == ['d']
+    assert list(dag.all_downstreams('d')) == []
 
 
 @with_setup(start_with_graph)
@@ -101,9 +113,11 @@ def test_all_downstreams_pass_graph():
                     'b': ['d'],
                     'c': ['d'],
                     'd': []})
-    assert dag.all_downstreams('a', dag2.graph) == ['c', 'd']
-    assert dag.all_downstreams('b', dag2.graph) == ['d']
-    assert dag.all_downstreams('d', dag2.graph) == []
+    all_nodes_downstream_of_a = list(dag.all_downstreams('a', dag2.graph))
+    all_nodes_downstream_of_a.sort()
+    assert all_nodes_downstream_of_a == ['c', 'd']
+    assert list(dag.all_downstreams('b', dag2.graph)) == ['d']
+    assert list(dag.all_downstreams('d', dag2.graph)) == []
 
 
 @with_setup(start_with_graph)
@@ -116,7 +130,7 @@ def test_predecessors():
 
 @with_setup(start_with_graph)
 def test_all_leaves():
-    assert dag.all_leaves() == ['d']
+    assert list(dag.all_leaves()) == ['d']
 
 
 @with_setup(start_with_graph)

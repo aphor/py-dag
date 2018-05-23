@@ -20,6 +20,12 @@ class DAG(object):
         """ Construct a new DAG with no nodes or edges. """
         self.reset_graph()
 
+    def __str__(self):
+        """
+        String representation of DAG
+        """
+        return "DAG(" + repr(self.graph) + ")"
+
     def add_node(self, node_name, graph=None):
         """ Add a node if it does not exist yet, or error out. """
         if not graph:
@@ -52,68 +58,93 @@ class DAG(object):
         except KeyError:
             pass
 
-    def add_edge(self, ind_node, dep_node, graph=None):
-        """ Add an edge (dependency) between the specified nodes. """
+    def add_edge(self, ind_node, dep_node, graph=None, dependency_type=None):
+        """
+        Add an edge (dependency) between the specified nodes.
+        Optionally, an edge label can be supplied with a keyword argument:
+          dependency_type='something'
+        """
         if not graph:
             graph = self.graph
         if ind_node not in graph or dep_node not in graph:
             raise KeyError('one or more nodes do not exist in graph')
         test_graph = deepcopy(graph)
-        test_graph[ind_node].add(dep_node)
+        test_graph[ind_node].add((dep_node, dependency_type))
         is_valid, message = self.validate(test_graph)
         if is_valid:
-            graph[ind_node].add(dep_node)
+            graph[ind_node].add((dep_node, dependency_type))
         else:
-            raise DAGValidationError()
+            msg = "ERROR: Egde from {} to {} would create a cycle!".format(ind_node,dep_node)
+            raise DAGValidationError(msg)
 
-    def delete_edge(self, ind_node, dep_node, graph=None):
-        """ Delete an edge from the graph. """
+    def delete_edge(self, ind_node, dep_node, graph=None, dependency_type=None):
+        """
+        Delete an edge from the graph, optionally constrained to nodes with edge
+        types matching dependency_type='something'.
+        """
         if not graph:
             graph = self.graph
-        if dep_node not in graph.get(ind_node, []):
+        if (dep_node, dependency_type) not in graph.get(ind_node, []):
             raise KeyError('this edge does not exist in graph')
-        graph[ind_node].remove(dep_node)
+        graph[ind_node].remove((dep_node, dependency_type))
 
-    def rename_edges(self, old_task_name, new_task_name, graph=None):
-        """ Change references to a task in existing edges. """
+    def rename_edges(self, old_node_name, new_node_name, graph=None):
+        """ Change references to a node in existing edges. """
         if not graph:
             graph = self.graph
         for node, edges in graph.items():
 
-            if node == old_task_name:
-                graph[new_task_name] = copy(edges)
-                del graph[old_task_name]
+            if node == old_node_name:
+                graph[new_node_name] = copy(edges)
+                del graph[old_node_name]
 
             else:
-                if old_task_name in edges:
-                    edges.remove(old_task_name)
-                    edges.add(new_task_name)
+                if old_node_name in edges:
+                    edges.remove(old_node_name)
+                    edges.add(new_node_name)
+                tuple_edges = [e for e in edges if isinstance(e, tuple)]
+                if old_node_name in list(zip(*tuple_edges))[0]:
+                    for edge in [e for e in tuple_edges if e[0] == old_node_name]:
+                        edge_type = edge[1]
+                        edge = (new_node_name, edge_type)
 
-    def predecessors(self, node, graph=None):
-        """ Returns a list of all predecessors of the given node """
+    def predecessors(self, node, graph=None, dependency_type=None):
+        """
+        Returns a list of all predecessors of the given node, optionally
+        constrained to nodes with edge types matching dependency_type='something'
+        """
         if graph is None:
             graph = self.graph
-        return [key for key in graph if node in graph[key]]
+        if dependency_type:
+            return [key for key in graph if node in [e[0] for e in graph[key] if e[1] == dependency_type]]
+        else:
+            return [key for key in graph if node in [e[0] for e in graph[key]]]
 
-    def downstream(self, node, graph=None):
+    def downstream(self, node, graph=None, dependency_type=None):
         """ Returns a list of all nodes this node has edges towards. """
         if graph is None:
             graph = self.graph
         if node not in graph:
-            raise KeyError('node %s is not in graph' % node)
-        return list(graph[node])
+            raise KeyError('node %s is not in graph' % node[0])
+        if dependency_type:
+            return [edge[0] for edge in graph[node] if edge[1] == dependency_type]
+        else:
+            return list(set([edge[0] for edge in graph[node]]))
 
-    def all_downstreams(self, node, graph=None):
-        """Returns a list of all nodes ultimately downstream
+    def all_downstreams(self, node, graph=None, dependency_type=None):
+        """
+        Returns a list of all nodes ultimately downstream
         of the given node in the dependency graph, in
-        topological order."""
+        topological order, optionally constrained to follow edge types matching
+        dependency_type='something'.
+        """
         if graph is None:
             graph = self.graph
         nodes = [node]
         nodes_seen = set()
         i = 0
         while i < len(nodes):
-            downstreams = self.downstream(nodes[i], graph)
+            downstreams = self.downstream(nodes[i], graph, dependency_type=dependency_type)
             for downstream_node in downstreams:
                 if downstream_node not in nodes_seen:
                     nodes_seen.add(downstream_node)
@@ -130,12 +161,18 @@ class DAG(object):
         """ Return a list of all leaves (nodes with no downstreams) """
         if graph is None:
             graph = self.graph
-        return [key for key in graph if not graph[key]]
+        return [key for key in graph if not [e[0] for e in graph[key]]]
 
     def from_dict(self, graph_dict):
         """ Reset the graph and build it from the passed dictionary.
 
         The dictionary takes the form of {node_name: [directed edges]}
+
+        directed edges are represented as 2-tuples in the form of
+          ('dependent node', 'edge label')
+        when edges are labeled to support multigraph DAG edges.
+
+        directed edges can be any hashable (immutable) object otherwise
         """
 
         self.reset_graph()
@@ -145,7 +182,13 @@ class DAG(object):
             if not isinstance(dep_nodes, list):
                 raise TypeError('dict values must be lists')
             for dep_node in dep_nodes:
-                self.add_edge(ind_node, dep_node)
+                if isinstance(dep_node, tuple) and len(dep_node) == 2:
+                    self.add_edge(ind_node, dep_node[0], dependency_type=dep_node[1])
+                if isinstance(dep_node, tuple) and len(dep_node) > 2:
+                    raise ValueError("%s is not a tuple in the form of %s" %
+                        repr(dep_node), "('dependent node', 'edge label')")
+                else:
+                    self.add_edge(ind_node, str(dep_node))
 
     def reset_graph(self):
         """ Restore the graph to an empty state. """
@@ -157,7 +200,7 @@ class DAG(object):
             graph = self.graph
 
         dependent_nodes = set(
-            node for dependents in six.itervalues(graph) for node in dependents
+            edge[0] for dependents in six.itervalues(graph) for edge in dependents
         )
         return [node for node in graph.keys() if node not in dependent_nodes]
 
@@ -186,7 +229,7 @@ class DAG(object):
 
         for u in graph:
             for v in graph[u]:
-                in_degree[v] += 1
+                in_degree[v[0]] += 1
 
         queue = deque()
         for u in in_degree:
@@ -198,9 +241,9 @@ class DAG(object):
             u = queue.pop()
             l.append(u)
             for v in graph[u]:
-                in_degree[v] -= 1
-                if in_degree[v] == 0:
-                    queue.appendleft(v)
+                in_degree[v[0]] -= 1
+                if in_degree[v[0]] == 0:
+                    queue.appendleft(v[0])
 
         if len(l) == len(graph):
             return l
